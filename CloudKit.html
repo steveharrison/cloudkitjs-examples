@@ -1,0 +1,340 @@
+<html>
+	<head></head>
+	<body>
+		<!-- Listen for the cloudkitloaded event on the window object. -->
+		<script>
+			function demoPerformQuery(
+			  databaseScope,zoneName,ownerRecordName,recordType,
+			  desiredKeys,sortByField,ascending,latitude,longitude,
+			  filters
+			) {
+			  var container = CloudKit.getDefaultContainer();
+			  var database = container.getDatabaseWithDatabaseScope(
+				CloudKit.DatabaseScope[databaseScope]
+			  );
+			
+			  // Set the query parameters.
+			  var query = {
+				recordType: recordType
+			  };
+			
+			  if(sortByField) {
+				var sortDescriptor = {
+				  fieldName: sortByField,
+				  ascending: ascending
+				};
+			
+				// if(!isNaN(latitude) && !isNaN(longitude)) {
+				//   sortDescriptor.relativeLocation = {
+				// 	latitude: latitude,
+				// 	longitude: longitude
+				//   };
+				// }
+			
+				query.sortBy = [sortDescriptor];
+			  }
+			
+			  // Convert the filters to the appropriate format.
+			  query.filterBy = filters.map(function(filter) {
+				filter.fieldValue = { value: filter.fieldValue };
+				return filter;
+			  });
+			
+			
+			  // Set the options.
+			  var options = {
+			
+				// Restrict our returned fields to this array of keys.
+				desiredKeys: desiredKeys,
+			
+				// Fetch 5 results at a time.
+				resultsLimit: 20
+			
+			  };
+			
+			  if(zoneName) {
+				options.zoneID = { zoneName: zoneName };
+				if(ownerRecordName) {
+				  options.zoneID.ownerRecordName = ownerRecordName;
+				}
+			  }
+			
+			  // If we have a continuation marker, use it to fetch the next 5 results.
+			  // var continuationMarker = getContinuationMarker();
+			  // if(continuationMarker) {
+				// options.continuationMarker = continuationMarker;
+			  // }
+			
+			  // Execute the query.
+			  return database.performQuery(query,options)
+				.then(function (response) {
+				  if(response.hasErrors) {
+			
+					// Handle them in your app.
+					throw response.errors[0];
+			
+				  } else {
+					var records = response.records;
+			
+					// Save the continuation marker so we can fetch more results.
+					// saveContinuationMarker(response.continuationMarker);
+			
+					console.log('records: ', records);
+				  }
+				});
+			}
+			
+			function demoSaveRecords(
+			  databaseScope,recordName,recordChangeTag,recordType,zoneName,
+			  forRecordName,forRecordChangeTag,publicPermission,ownerRecordName,
+			  participants,parentRecordName,fields,createShortGUID
+			) {
+			  var container = CloudKit.getDefaultContainer();
+			  var database = container.getDatabaseWithDatabaseScope(
+				CloudKit.DatabaseScope[databaseScope]
+			  );
+			  			
+			  var options = {
+				// By passing and fetching number fields as strings we can use large
+				// numbers (up to the server's limits).
+				numbersAsStrings: true
+			  };
+			
+			  // If no zoneName is provided the record will be saved to the default zone.
+			  if(zoneName) {
+				options.zoneID = { zoneName: zoneName };
+				if(ownerRecordName) {
+				  options.zoneID.ownerRecordName = ownerRecordName;
+				}
+			  }
+			
+			  var record = {
+			
+				recordType: recordType
+			
+			  };
+			
+			  // If no recordName is supplied the server will generate one.
+			  if(recordName) {
+				record.recordName = recordName;
+			  }
+			
+			  // To modify an existing record, supply a recordChangeTag.
+			  if(recordChangeTag) {
+				record.recordChangeTag = recordChangeTag;
+			  }
+			
+			  // Convert the fields to the appropriate format.
+			  record.fields = Object.keys(fields).reduce(function(obj,key) {
+				obj[key] = { value: fields[key] };
+				return obj;
+			  },{});
+			
+			  // If we are going to want to share the record we need to
+			  // request a stable short GUID.
+			  if(createShortGUID) {
+				record.createShortGUID = true;
+			  }
+			
+			  // If we want to share the record via a parent reference we need to set
+			  // the record's parent property.
+			  if(parentRecordName) {
+				record.parent = { recordName: parentRecordName };
+			  }
+			
+			  if(publicPermission) {
+				record.publicPermission = CloudKit.ShareParticipantPermission[publicPermission];
+			  }
+			
+			  // If we are creating a share record, we must specify the
+			  // record which we are sharing.
+			  if(forRecordName && forRecordChangeTag) {
+				record.forRecord = {
+				  recordName: forRecordName,
+				  recordChangeTag: forRecordChangeTag
+				};
+			  }
+			
+			  if(participants) {
+				record.participants = participants.map(function(participant) {
+				  return {
+					userIdentity: {
+					  lookupInfo: { emailAddress: participant.emailAddress }
+					},
+					permission: CloudKit.ShareParticipantPermission[participant.permission],
+					type: participant.type,
+					acceptanceStatus: participant.acceptanceStatus
+				  };
+				});
+			  }
+			
+			  return database.saveRecords(record,options)
+				.then(function(response) {
+				  if(response.hasErrors) {
+			
+					// Handle the errors in your app.
+					throw response.errors[0];
+			
+				  } else {
+			
+					return renderRecord(response.records[0],options.zoneID, databaseScope);
+				  }
+			  });
+			}
+
+		  window.addEventListener('cloudkitloaded', function() {
+			  function demoSetUpAuth() {
+			  
+				// Get the container.
+				var container = CloudKit.getDefaultContainer();
+			  
+				function gotoAuthenticatedState(userIdentity) {
+				  var name = userIdentity.nameComponents;
+				  if(name) {
+					displayUserName(name.givenName + ' ' + name.familyName);
+				  } else {
+					displayUserName('User record name: ' + userIdentity.userRecordName);
+				  }
+				  container
+					.whenUserSignsOut()
+					.then(gotoUnauthenticatedState);
+				}
+				function gotoUnauthenticatedState(error) {
+			  
+				  if(error && error.ckErrorCode === 'AUTH_PERSIST_ERROR') {
+					showDialogForPersistError();
+				  }
+			  
+				  displayUserName('Unauthenticated User');
+				  container
+					.whenUserSignsIn()
+					.then(gotoAuthenticatedState)
+					.catch(gotoUnauthenticatedState);
+				}
+			  
+				// Check a user is signed in and render the appropriate button.
+				return container.setUpAuth()
+				  .then(function(userIdentity) {
+			  
+					// Either a sign-in or a sign-out button was added to the DOM.
+			  
+					// userIdentity is the signed-in user or null.
+					if(userIdentity) {
+					  gotoAuthenticatedState(userIdentity);
+					} else {
+					  gotoUnauthenticatedState();
+					}
+				  });
+			  }
+
+			CloudKit.configure({
+				locale: 'en-us',
+  			
+				containers: [{
+  			
+	  			// Change this to a container identifier you own.
+	  			containerIdentifier: 'iCloud.dev.steveharrison.AzamCloudKitTutorial',
+  			
+	  			apiTokenAuth: {
+					// And generate a web token through CloudKit Dashboard.
+					apiToken: '29e98f29cfd346f61028d8161ec9a4422a9aa9edbae0e57156ee3cf21593d0c1',
+  			
+					persist: true, // Sets a cookie.
+  			
+					signInButton: {
+		  			id: 'apple-sign-in-button',
+		  			theme: 'black' // Other options: 'white', 'white-with-outline'.
+					},
+  			
+					signOutButton: {
+		  			id: 'apple-sign-out-button',
+		  			theme: 'black'
+					}
+	  			},
+  			
+	  			environment: 'development'
+				}]
+  		  	});
+				
+				demoSetUpAuth();
+				const results = demoPerformQuery("PRIVATE", "_defaultZone", null, "TaskItem", ["title","isCompleted","dateAssigned"], "title", true, null, null, []);
+				
+				console.log('results: ', results);
+				
+				// demoSaveRecords("PRIVATE", null, null, "TaskItem", "_defaultZone", null, null, null, null, null, null, { title: "A todo created from the web!", dateAssigned: new Date().toISOString(), isCompleted: false }, true)
+				
+				// var newRecord = {
+				// 					recordType: 'TaskItem',
+				// 					fields: {
+				// 						title: { value: 'My New Task' },
+				// 						dateAssigned: { value: { timestamp: new Date().toISOString() } },  // Wrap date in CloudKit format
+				// 						isCompleted: { value: true }
+				// 					}
+				// 				};
+				// 
+				// // Save the record to CloudKit
+				var container2 = CloudKit.getDefaultContainer();
+				// 
+				// var db = container2.privateCloudDatabase;
+				// db.saveRecords([newRecord]).then(function(response) {
+				// 	if (response.hasErrors) {
+				// 		console.error('Error saving record:', response.errors[0]);
+				// 	} else {
+				// 		console.log('Record saved successfully:', response.records[0]);
+				// 	}
+				// });
+
+// Initialize the CloudKit container (assuming it's already configured correctly)
+				var db = container2.privateCloudDatabase;
+				
+				// var newRecord = {
+				// 	recordType: 'TaskItem',
+				// 	fields: {
+				// 		"title": {
+				// 			"value": "Another 2",
+				// 			"type": "STRING"
+				// 		},
+				// 		"dateAssigned": {
+				// 			"value": 1726026776575,
+				// 			"type": "TIMESTAMP"
+				// 		},
+				// 		"isCompleted": {
+				// 			"value": 0,
+				// 			"type": "INT64"
+				// 		}
+				// 	}
+				// };
+
+				
+				// Create a new record with a correctly formatted date field
+var newRecord = {
+					recordType: 'TaskItem',
+					fields: {
+						title: { value: 'Brand New Task!' },
+						dateAssigned: { value: new Date().getTime() },  // UNIX epoch in milliseconds
+						isCompleted: { value: 0 }  // Use 0 for false, 1 for true (NUMBER_INT64 type)
+					}
+				};
+				
+				// Save the record using saveRecords
+				// db.saveRecords([newRecord]).then(function(response) {
+				// 	if (response.hasErrors) {
+				// 		console.error('Error saving record:', response.errors[0]);
+				// 	} else {
+				// 		console.log('Record saved successfully:', response.records[0]);
+				// 	}
+				// });
+		});
+		</script>
+		
+		<!-- Include the script with the ‘async’ attribute. -->
+		<script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js" async></script>
+
+		<script>
+			
+		</script>
+		
+		<div id="apple-sign-in-button"></div>
+		<div id="apple-sign-out-button"></div>
+	</body>
+</html>
